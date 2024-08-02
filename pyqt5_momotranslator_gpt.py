@@ -2,6 +2,7 @@ import os
 import os.path
 import re
 import sys
+from ast import Import, ImportFrom, parse, walk
 from collections import Counter, OrderedDict
 from copy import deepcopy
 from datetime import datetime
@@ -15,15 +16,17 @@ from pathlib import Path
 from platform import machine, processor, system, uname, python_version
 from pprint import pprint
 from re import I, findall, match, IGNORECASE, sub, fullmatch, escape, search
-from shutil import copy2
+from shutil import copy2, copytree
 from subprocess import PIPE, Popen
 from time import localtime, sleep, strftime, time
 from traceback import print_exc
 from urllib.parse import urlparse
 from uuid import getnode
+from zipfile import ZipFile, ZIP_STORED, ZIP_DEFLATED
 
 import Quartz
 import osascript
+import pkg_resources
 import pyperclip
 import validators
 from PIL import Image
@@ -32,9 +35,10 @@ from cv2 import COLOR_RGB2BGR, cvtColor, imencode
 from deep_translator import GoogleTranslator
 from html2text import HTML2Text
 from loguru import logger
+from lxml import etree as ET
 from natsort import natsorted
 from nltk.corpus import names
-from numpy import array, ones, uint8
+from numpy import array
 from pathvalidate import sanitize_filename
 from prettytable import PrettyTable
 from psutil import virtual_memory
@@ -43,6 +47,7 @@ from pygments import highlight
 from pygments.formatters import TerminalFormatter
 from pygments.lexers import HtmlLexer
 from pytz import UTC
+from stdlib_list import stdlib_list
 from tqdm import tqdm
 
 good_names = set(names.words())
@@ -81,6 +86,7 @@ homedir = expanduser("~")
 homedir = Path(homedir)
 DOWNLOADS = homedir / 'Downloads'
 DOCUMENTS = homedir / 'Documents'
+MOVIES = homedir / 'Movies'
 
 mac_address = ':'.join(findall('..', '%012x' % getnode()))
 node_name = platform_uname.node
@@ -181,7 +187,10 @@ p_ISBN = re.compile(r'(?:-13)?:?\s?(?:978|979)?[\-]?\d{1,5}[\-]?\d{1,7}[\-]?\d{1
 p_decimal_or_comma = re.compile(r'^\d*\.?\d*$|^\d*[,]?\d*$', I)
 # p_en = re.compile(r"(?<![A-Za-z0-9@'-])[A-Za-z0-9@'-]+(?:'[A-Za-z0-9@'-]+)*(?![A-Za-z0-9@'-])")
 # 正则表达式匹配连续英文单词、逗号、点和电子邮件
-p_en = re.compile(r'[A-Za-z0-9@,\.\'-]+(?:\s+[A-Za-z0-9@,\.\'-]+)*')
+p_en = re.compile(r'（?[A-Za-z0-9äöüßÄÖÜéèêñçàìòùáíóúýė@,\.\'-]+(?:\s+[A-Za-z0-9äöüßÄÖÜéèêñçàìòùáíóúýė@,\.\'-]+)*）?')
+
+# 标点符号，排除 '.com'
+p_punct = re.compile(r'([,.:;?!，。：；？！、…])(?!\s|com)')
 
 roman_numerals_upper = [
     "I", "II", "III", "IV", "V",
@@ -214,12 +223,20 @@ untranslatables = [
     'Zoom',
     'ID',
     'SUV',
+    'CD',
     'DVD',
+    'LED',
+    'PX',
+    'Uno',
     'Visa',
     'ChatGPT',
     'WAPA',
     'HGTV',
     'Brita',
+    'FaceBook',
+    'Meta',
+    'IBM',
+    # 'Wager',
 ]
 
 # 英文到中文的章节映射字典
@@ -243,8 +260,101 @@ chapter_map = {
     "Seventeen": "十七",
     "Eighteen": "十八",
     "Nineteen": "十九",
-    "Twenty": "二十"
+    "Twenty": "二十",
+    "Twenty-One": "二十一",
+    "Twenty-Two": "二十二",
+    "Twenty-Three": "二十三",
+    "Twenty-Four": "二十四",
+    "Twenty-Five": "二十五",
+    "Twenty-Six": "二十六",
+    "Twenty-Seven": "二十七",
+    "Twenty-Eight": "二十八",
+    "Twenty-Nine": "二十九",
+    "Thirty": "三十",
+    "Thirty-One": "三十一",
+    "Thirty-Two": "三十二",
+    "Thirty-Three": "三十三",
+    "Thirty-Four": "三十四",
+    "Thirty-Five": "三十五",
+    "Thirty-Six": "三十六",
+    "Thirty-Seven": "三十七",
+    "Thirty-Eight": "三十八",
+    "Thirty-Nine": "三十九",
+    "Forty": "四十",
+    "Forty-One": "四十一",
+    "Forty-Two": "四十二",
+    "Forty-Three": "四十三",
+    "Forty-Four": "四十四",
+    "Forty-Five": "四十五",
+    "Forty-Six": "四十六",
+    "Forty-Seven": "四十七",
+    "Forty-Eight": "四十八",
+    "Forty-Nine": "四十九",
+    "Fifty": "五十",
+    "Fifty-One": "五十一",
+    "Fifty-Two": "五十二",
+    "Fifty-Three": "五十三",
+    "Fifty-Four": "五十四",
+    "Fifty-Five": "五十五",
+    "Fifty-Six": "五十六",
+    "Fifty-Seven": "五十七",
+    "Fifty-Eight": "五十八",
+    "Fifty-Nine": "五十九",
+    "Sixty": "六十",
+    "Sixty-One": "六十一",
+    "Sixty-Two": "六十二",
+    "Sixty-Three": "六十三",
+    "Sixty-Four": "六十四",
+    "Sixty-Five": "六十五",
+    "Sixty-Six": "六十六",
+    "Sixty-Seven": "六十七",
+    "Sixty-Eight": "六十八",
+    "Sixty-Nine": "六十九",
+    "Seventy": "七十",
+    "Seventy-One": "七十一",
+    "Seventy-Two": "七十二",
+    "Seventy-Three": "七十三",
+    "Seventy-Four": "七十四",
+    "Seventy-Five": "七十五",
+    "Seventy-Six": "七十六",
+    "Seventy-Seven": "七十七",
+    "Seventy-Eight": "七十八",
+    "Seventy-Nine": "七十九",
+    "Eighty": "八十",
+    "Eighty-One": "八十一",
+    "Eighty-Two": "八十二",
+    "Eighty-Three": "八十三",
+    "Eighty-Four": "八十四",
+    "Eighty-Five": "八十五",
+    "Eighty-Six": "八十六",
+    "Eighty-Seven": "八十七",
+    "Eighty-Eight": "八十八",
+    "Eighty-Nine": "八十九",
+    "Ninety": "九十",
+    "Ninety-One": "九十一",
+    "Ninety-Two": "九十二",
+    "Ninety-Three": "九十三",
+    "Ninety-Four": "九十四",
+    "Ninety-Five": "九十五",
+    "Ninety-Six": "九十六",
+    "Ninety-Seven": "九十七",
+    "Ninety-Eight": "九十八",
+    "Ninety-Nine": "九十九",
 }
+
+numbers = list(chapter_map.keys())
+lower_numbers = [x.lower() for x in numbers]
+
+ignore_texts = [
+    'ePub r1.0',
+    'ePub base r1.2',
+    'A.B.',
+    'itr.1',
+    'con.1',
+    'app.1',
+]
+
+ignore_texts += untranslatables
 
 # 创建一个新的 KeyboardEvent，模拟按下回车键。
 # 'keydown' 是事件类型，表示一个按键被按下。
@@ -341,8 +451,17 @@ say "{activate_app_voice_str}" speaking rate 180
 """
 
 # 定义自闭合标签列表
-void_tags = {'img', 'input', 'br', 'meta', 'link', 'hr', 'base', 'col', 'command', 'embed', 'keygen', 'param',
-             'source', 'track', 'wbr', 'area'}
+void_tags = {
+    'img', 'input', 'br', 'meta', 'link', 'hr', 'base', 'col', 'command', 'embed', 'keygen', 'param',
+    'source', 'track', 'wbr', 'area',
+    # 'span',
+}
+
+replacements = {
+    '@public@vhost@g@gutenberg@html@files@16464@16464-h@16464-h-': 'ψ',
+    'Lowe_9780804137133_epub_': 'ω',
+    'Gran_9780385534277_epub3_': 'Θ'
+}
 
 
 # ================================基础函数区================================
@@ -688,9 +807,8 @@ def run_apple_script(script):
     """
     if script:
         script = remove_common_indent(script)
-        logger.debug(f'{script}')
+        # logger.debug(f'{script.strip()}')
         result = applescript.run(script)
-
         if result.code == 0:
             return result.out
         else:
@@ -817,7 +935,9 @@ def save_from_browser(browser: str):
     if current_url and title:
         if current_url.startswith(chatgpt_prefix):
             safe_title = title.replace('/', '／').replace('\\', '＼')
-            chatgpt_html = ChatGPT / f'{sanitize_filename(safe_title)}-{Path(current_url).stem}.html'
+            chatgpt_html_stem = f'{sanitize_filename(safe_title)}-{Path(current_url).stem}'
+            chatgpt_html = ChatGPT / f'{chatgpt_html_stem}.html'
+            logger.info(f'{chatgpt_html_stem=}')
             content = get_browser_current_tab_html(browser)
             # logger.info(f'{content}')
             soup = BeautifulSoup(content, 'html.parser')
@@ -1281,6 +1401,163 @@ def warn_user(warn_str):
 
 
 @logger.catch
+def gpt_translate(roi_htmls, prompt_prefix):
+    # ================排除已经翻译的部分================
+    need2trans_lines = []
+    roi_htmls = reduce_list(roi_htmls)
+    for r in range(len(roi_htmls)):
+        roi_html = roi_htmls[r]
+        src_soup = BeautifulSoup(roi_html, 'html.parser')
+        src_1st_tag = src_soup.find()
+        src_opening = roi_html.split('>')[0] + '>'
+        src_closing = f"</{src_1st_tag.name}>"
+        src_content = roi_html.removeprefix(src_opening).removesuffix(src_closing)
+        src_content = src_content.replace('\xa0', ' ').replace('\u2002', ' ')
+        if src_content not in main_gpt_dic:
+            need2trans_lines.append(roi_html)
+            # logger.debug(f'{src_1st_tag=}')
+            # logger.debug(f'{src_opening=}')
+            # logger.debug(f'{src_closing=}')
+            # logger.debug(f'{src_content=}')
+    need2trans_lines = reduce_list(need2trans_lines)
+    html_text = lf.join(need2trans_lines)
+    split_lines_raw = get_split_lines(html_text)
+    split_lines_raw = [x for x in split_lines_raw if x != []]
+    split_lines = []
+    # ================添加提示词================
+    for s in range(len(split_lines_raw)):
+        input_lines = split_lines_raw[s]
+        input_text = lf.join(input_lines)
+        full_prompt = f'{prompt_prefix}{lf}```html{lf}{input_text}{lf}```'
+        possible_divs = [x for x in target_tups if x[0] == '用户' and full_prompt in x[-1]]
+        if possible_divs and False:
+            # ================已经提问的段落================
+            logger.debug(full_prompt)
+            possible_div = possible_divs[0]
+            possible_ind = target_tups.index(possible_div)
+            logger.warning(f'已经提问[{s + 1}/{len(split_lines_raw)}], {possible_ind=}')
+        else:
+            # ================尚未提问的段落================
+            split_lines.append(input_lines)
+            if len(split_lines) <= max_limit:
+                logger.warning(f'尚未提问[{s + 1}/{len(split_lines_raw)}], {len(input_lines)=}, {len(input_text)=}')
+                logger.info(full_prompt)
+    if do_automate and split_lines:
+        if ask_mode == 'web':
+            for s in range(len(split_lines)):
+                input_lines = split_lines[s]
+                input_text = lf.join(input_lines)
+                full_prompt = f'{prompt_prefix}{lf}```html{lf}{input_text}{lf}```'
+                fill_textarea(browser, full_prompt, activate_browser, hit_enter)
+                if s != len(split_lines):
+                    stime = web_answer_time
+                else:
+                    # 最后一次等待时间
+                    stime = int(0.6 * web_answer_time)
+                break
+                # 等待回答完成
+                sleep(stime)
+        else:
+            for s in range(len(split_lines)):
+                input_lines = split_lines[s]
+                input_text = lf.join(input_lines)
+                full_prompt = f'{prompt_prefix}{lf}```html{lf}{input_text}{lf}```'
+                if s < max_limit:
+                    logger.warning(
+                        f'[{s + 1}/{len(split_lines_raw)}], {len(input_lines)=}, {len(input_text)=}')
+                    logger.info(full_prompt)
+                    if force_gpt4:
+                        your_limit_location = find_n_click(your_limit_logo)
+                        if your_limit_location:
+                            logger.error(f'{your_limit_location=}')
+                            warn_user('已到限额')
+                            break
+                        ChatGPT4o_location = find_n_click(ChatGPT4o_logo)
+                        if ChatGPT4o_location:
+                            logger.error(f'{ChatGPT4o_location=}')
+                            warn_user('已变成GPT4o')
+                            break
+                    retry_location = find_n_click(retry_logo)
+                    if retry_location:
+                        logger.error(f'{retry_location=}')
+                        warn_user('需重试')
+                        break
+                    reconnect_location = find_n_click(reconnect_logo)
+                    if reconnect_location:
+                        logger.error(f'{reconnect_location=}')
+                        warn_user('需重连')
+                        sleep(10)  # 等待用户手动处理
+                        reconnect_location = find_n_click(reconnect_logo)
+                        if reconnect_location:
+                            logger.error(f'{reconnect_location=}')
+                            warn_user('需重连')
+                            break
+
+                    # 调取浏览器或应用到前台
+                    act_prog_name, act_window_name = get_active_app()
+                    activate_app(app_name, 4)
+                    sleep(0.2)
+                    # 粘贴prompt
+                    pyperclip.copy(full_prompt)
+                    sleep(0.05)
+                    as_proc(as_paste)
+                    sleep(1)
+
+                    if hit_enter:
+                        # 按下回车键
+                        keyDown('enter')
+                        sleep(0.1)
+                        keyUp('enter')
+
+                        sleep(1)
+                        activate_app_base(act_prog_name)
+                        sleep(1)
+
+                        up_arrow_location = find_n_click(up_arrow_logo)
+                        if up_arrow_location:
+                            logger.error(f'{up_arrow_location=}')
+                            warn_user('没按出回车')
+                            break
+
+                        sleep(3)
+                        retry_location = find_n_click(retry_logo)
+                        if retry_location:
+                            logger.error(f'{retry_location=}')
+                            warn_user('需重试')
+                            break
+
+                        if s == max_limit - 1:
+                            # ================所有图片上传完毕================
+                            as_proc(as_submarine)
+                            as_proc(as_Tingting_uploaded)
+                            break
+
+                        # 等待回答
+                        for _ in tqdm(range(int(app_answer_time / 5)), desc="等待"):
+                            sleep(5)
+                        # sleep(app_answer_time)
+
+                        # ================确保答案已经生成完毕================
+                        headphone_location = None
+                        for a in range(50):
+                            # 找到屏幕上的图片位置
+                            headphone_location = find_n_click(headphone_logo)
+                            if headphone_location:
+                                # 如果找到就不再等待
+                                logger.info(f'{headphone_location=}')
+                                break
+                            else:
+                                sleep(2)
+                        if not headphone_location:
+                            warn_user('答案未生成完毕')
+                            break
+                    else:
+                        warn_user('用户设定不再继续')
+                        break
+    logger.warning(f'chatGPT翻译完成, {len(split_lines)=}')
+
+
+@logger.catch
 def count_tags(soup, tag_name):
     return len(soup.find_all(tag_name))
 
@@ -1315,6 +1592,85 @@ def check_tag_balance(html_content):
     return tag_balance
 
 
+@logger.catch
+def line2dic(input_line, output_line, main_gpt_dic, sub_gpt_dic):
+    input_line = input_line.replace('\xa0', ' ').replace('\u2002', ' ')
+    output_line = output_line.replace('\xa0', ' ').replace('\u2002', ' ')
+    input_soup = BeautifulSoup(input_line, 'html.parser')
+    output_soup = BeautifulSoup(output_line, 'html.parser')
+    input_text = input_soup.get_text()
+    output_text = output_soup.get_text()
+
+    input_1st_tag = input_soup.find()
+    output_1st_tag = output_soup.find()
+    if output_1st_tag is None:
+        logger.error(f'{output_text=}')
+    else:
+        # 仅当内部a标签数量一致且span标签数量一致时加入翻译词典
+        input_a_cnt = count_tags(input_soup, 'a')
+        input_span_cnt = count_tags(input_soup, 'span')
+        output_a_cnt = count_tags(output_soup, 'a')
+        output_span_cnt = count_tags(output_soup, 'span')
+
+        input_opening = input_line.split('>')[0] + '>'
+        input_closing = f"</{input_1st_tag.name}>"
+        input_content = input_line.removeprefix(input_opening).removesuffix(input_closing)
+        output_opening = output_line.split('>')[0] + '>'
+        output_closing = f"</{output_1st_tag.name}>"
+        output_content = output_line.removeprefix(output_opening).removesuffix(output_closing)
+
+        input_balanced = check_tag_balance(input_line)
+        output_balanced = check_tag_balance(output_line)
+
+        # 定义一个正则表达式，精确匹配含撇号、连字符和社交媒体用户名的英文短语
+        matches = findall(p_en, output_text)
+        # 过滤结果，确保每个匹配包含至少两个字母
+        en_phrases = [m for m in matches if search('[A-Za-z]{2,}', m)]
+        en_phrases = [x for x in en_phrases if x not in roman_numerals]
+        en_phrases = [x for x in en_phrases if x not in untranslatables]
+        en_phrases = [x for x in en_phrases if not x.startswith('@')]
+        en_phrases = [x for x in en_phrases if not x.endswith('@')]
+        en_phrases = [x for x in en_phrases if not check_url(x)]
+        en_lowers = [x.lower() for x in en_phrases]
+        en_somes = [x for x in en_lowers if x.startswith(('some', 'linger'))]
+        en_names = [x for x in en_phrases if x in good_names]
+        en_numbers = [x for x in en_lowers if x in lower_numbers]
+        # if input_a_cnt == output_a_cnt and input_span_cnt == output_span_cnt:
+        is_valid = False
+        if output_content == input_content:
+            # 未翻译
+            # logger.warning(f'{input_content=}')
+            pass
+        elif all(output_balanced.values()):
+            # 所有标签均有开闭
+            if en_names:
+                # 包含英文名
+                logger.debug(f'{en_names=}')
+                sub_gpt_dic[input_content] = output_content
+                if allow_en_names:
+                    is_valid = True
+            elif en_numbers:
+                logger.debug(f'{en_numbers=}')
+                sub_gpt_dic[input_content] = output_content
+                # is_valid = True
+            elif en_somes:
+                # 例如somehow等等
+                logger.debug(f'{en_phrases=}')
+                sub_gpt_dic[input_content] = output_content
+                # is_valid = True
+            elif en_phrases:
+                logger.debug(f'{en_phrases=}')
+                is_valid = True
+            else:
+                is_valid = True
+        if is_valid:
+            main_gpt_dic[input_content] = output_content
+        else:
+            # logger.debug(f'{input_line=}')
+            logger.warning(f'{output_line=}')
+    return main_gpt_dic, sub_gpt_dic
+
+
 # @timer_decorator
 @logger.catch
 def get_gpt_dic(target_tups):
@@ -1325,7 +1681,7 @@ def get_gpt_dic(target_tups):
     error_num = 0
     display_mode = 'side_by_side'
     display_mode = 'up_down'
-
+    logger.warning(f'{len(target_tups)=}')
     for t in range(len(target_tups) - 1):
         target_tup = target_tups[t]
         next_target_tup = target_tups[t + 1]
@@ -1360,74 +1716,33 @@ def get_gpt_dic(target_tups):
                 for c in range(len(ilines)):
                     input_line = ilines[c]
                     output_line = olines[c]
+                    main_gpt_dic, sub_gpt_dic = line2dic(input_line, output_line, main_gpt_dic, sub_gpt_dic)
 
-                    input_soup = BeautifulSoup(input_line, 'html.parser')
-                    output_soup = BeautifulSoup(output_line, 'html.parser')
-                    input_text = input_soup.get_text()
-                    output_text = output_soup.get_text()
-
-                    input_1st_tag = input_soup.find()
-                    output_1st_tag = output_soup.find()
-
-                    # 仅当内部a标签数量一致且span标签数量一致时加入翻译词典
-                    input_a_cnt = count_tags(input_soup, 'a')
-                    input_span_cnt = count_tags(input_soup, 'span')
-                    output_a_cnt = count_tags(output_soup, 'a')
-                    output_span_cnt = count_tags(output_soup, 'span')
-
-                    input_opening = input_line.split('>')[0] + '>'
-                    input_closing = f"</{input_1st_tag.name}>"
-                    input_content = input_line.removeprefix(input_opening).removesuffix(input_closing)
-                    output_opening = output_line.split('>')[0] + '>'
-                    output_closing = f"</{output_1st_tag.name}>"
-                    output_content = output_line.removeprefix(output_opening).removesuffix(output_closing)
-
-                    input_balanced = check_tag_balance(input_line)
-                    output_balanced = check_tag_balance(output_line)
-
-                    # 定义一个正则表达式，精确匹配含撇号、连字符和社交媒体用户名的英文短语
-                    matches = findall(p_en, output_text)
-                    # 过滤结果，确保每个匹配包含至少两个字母
-                    en_phrases = [m for m in matches if search('[A-Za-z]{2,}', m)]
-                    en_phrases = [x for x in en_phrases if x not in roman_numerals]
-                    en_phrases = [x for x in en_phrases if x not in untranslatables]
-                    en_phrases = [x for x in en_phrases if not x.startswith('@')]
-                    en_phrases = [x for x in en_phrases if not x.endswith('@')]
-                    en_phrases = [x for x in en_phrases if not check_url(x)]
-                    # 只检查人名
-                    en_phrases = [x for x in en_phrases if x in good_names]
-                    # if input_a_cnt == output_a_cnt and input_span_cnt == output_span_cnt:
-                    is_valid = False
-                    if output_content == input_content:
-                        # 未翻译
-                        # logger.warning(f'{input_content=}')
-                        pass
-                    elif all(output_balanced.values()):
-                        # 所有标签均有开闭
-                        if en_phrases:
-                            # 包含英文
-                            logger.debug(f'{en_phrases=}')
-                            sub_gpt_dic[input_content] = output_content
-                            # is_valid = True
-                        else:
-                            is_valid = True
-                    if is_valid:
-                        main_gpt_dic[input_content] = output_content
-                    else:
-                        # logger.debug(f'{input_line=}')
-                        logger.warning(f'{output_line=}')
-                        pass
-
-    for i in range(300):
+    for i in range(120):
         input_content = f'Chapter {i + 1}'
         output_content = f'第{i + 1}章'
         main_gpt_dic[input_content] = output_content
-
-    # 填充字典使用上面的映射
+        main_gpt_dic[input_content.upper()] = output_content
+        main_gpt_dic[input_content.lower()] = output_content
+        input_content = f'Part {i + 1}'
+        output_content = f'第{i + 1}部分'
+        main_gpt_dic[input_content] = output_content
+        main_gpt_dic[input_content.upper()] = output_content
+        main_gpt_dic[input_content.lower()] = output_content
     for eng, chn in chapter_map.items():
+        main_gpt_dic[eng] = chn
+        main_gpt_dic[eng.upper()] = chn
+        main_gpt_dic[eng.lower()] = chn
         input_content = f"Chapter {eng}"
         output_content = f"第{chn}章"
         main_gpt_dic[input_content] = output_content
+        main_gpt_dic[input_content.upper()] = output_content
+        main_gpt_dic[input_content.lower()] = output_content
+        input_content = f"Part {eng}"
+        output_content = f"第{chn}部分"
+        main_gpt_dic[input_content] = output_content
+        main_gpt_dic[input_content.upper()] = output_content
+        main_gpt_dic[input_content.lower()] = output_content
 
     # logger.info(f'{error_num=}')
 
@@ -1555,6 +1870,10 @@ def check2ignore(para):
     elif fullmatch(r'[A-Z0-9]+(?:-[A-Z0-9]+)+', roi_text):
         # 检查文本是否为非标准书号
         return True
+    elif roi_text in ignore_texts:
+        return True
+    elif 'index-nav-bar-letter' in str(para):
+        return True
     return False
 
 
@@ -1597,94 +1916,24 @@ def get_roi_tags(soup):
     return roi_tags
 
 
-@timer_decorator
-@logger.catch
-def process_epub(all_html_files):
-    all_htmls = []
-    roi_htmls = []
-    roi_texts = []
-    console_htmls = []
-    span_classes = []
-    all_md = ''
-    all_words = []
-    handler_normal = HTML2Text()
-
-    for a in range(len(all_html_files)):
-        src_html = all_html_files[a]
-        html_content = read_txt(src_html)
-        logger.warning(f'[{a + 1}/{len(all_html_files)}]{src_html=}')
-
-        target_md = handler_normal.handle(html_content).strip()
-        all_md += f"{lf}{target_md}{lf}"
-
-        soup = BeautifulSoup(html_content, 'lxml')
-
-        text = soup.get_text(separator=' ')
-        words = findall(r'\b\w+\b', text.lower())
-        all_words.extend(words)
-
-        roi_htmls_chapter = []
-        roi_texts_chapter = []
-        roi_tags = get_roi_tags(soup)
-        for p in range(len(roi_tags)):
-            para = roi_tags[p]
-            roi_raw_html = str(para)
-            roi_text = para.get_text(strip=True)
-            if p_format == 'raw':
-                roi_html = roi_raw_html
-            elif p_format == 'text':
-                roi_html = roi_text
-            else:  # if p_format == 'raw_simple'
-                roi_html, span_classes, preserved_tags = get_roi_html(para, span_classes)
-            all_htmls.append(roi_raw_html)
-
-            if check2ignore(para):
-                pass
-            else:
-                roi_htmls_chapter.append(roi_html)
-                roi_texts_chapter.append(roi_text)
-
-                console_html = sub(r'(<\/?[\w\s="]+>)', r'\033[1;31m\1\033[0m', roi_html)
-                console_html = highlight(roi_html, HtmlLexer(), TerminalFormatter())
-                console_htmls.append(console_html)
-        roi_htmls.extend(roi_htmls_chapter)
-        roi_texts.extend(roi_texts_chapter)
-
-    # 打印提取的文本
-    for c in range(len(console_htmls)):
-        console_html = console_htmls[c]
-        print(f"---[{c + 1}]{lf}{lf}{console_html.strip()}{lf}")
-    logger.debug(f'{len(roi_htmls)=}')
-
-    span_classes = reduce_list(span_classes)
-    span_classes.sort()
-    for s in range(len(span_classes)):
-        span_class = span_classes[s]
-        # logger.warning(f'{span_class}')
-
-    word_count = Counter(all_words)
-    total_word_count = sum(word_count.values())
-
-    average_reading_speed = 250
-    est_time = total_word_count / average_reading_speed
-
-    # 输出统计结果
-    print(f"总词数: {total_word_count}")
-    print(f"不重复词数: {len(word_count)}")
-    print(f"预计阅读时间: {est_time:.2f}分钟")
-    write_txt(md_file, all_md)
-
-
 # @timer_decorator
 @logger.catch
-def get_dst_line(gpt_dic, src_line):
+def get_dst_line(gpt_dic, src_line, bilingual=False):
     src_soup = BeautifulSoup(src_line, 'html.parser')
     src_1st_tag = src_soup.find()
     src_opening = src_line.split('>')[0] + '>'
     src_closing = f"</{src_1st_tag.name}>"
     src_content = src_line.removeprefix(src_opening).removesuffix(src_closing)
+    src_content = src_content.replace('\xa0', ' ').replace('\u2002', ' ')
     dst_content = gpt_dic[src_content]
-    dst_line = f'{src_opening}{dst_content}{src_closing}'
+    if bilingual:
+        if src_opening.startswith('<p'):
+            # 添加换行
+            dst_line = f'{src_opening}{src_content}<br>{dst_content}{src_closing}'
+        else:
+            dst_line = f'{src_opening}{src_content}{dst_content}{src_closing}'
+    else:
+        dst_line = f'{src_opening}{dst_content}{src_closing}'
     return dst_line
 
 
@@ -1931,15 +2180,14 @@ def get_roi_html(para, span_classes):
             class_attr = link['class']
             # logger.warning(f'{class_attr=}')
             if class_attr == ['pginternal']:
-                if link.has_attr('href'):
-                    new_href = link['href'].removeprefix('@public@vhost@g@gutenberg@html@files@16464@16464-h@16464-h-')
-                    link['href'] = new_href
                 if link.has_attr('tag'):
                     del link['tag']
-            elif class_attr == ['hlink']:
-                if link.has_attr('href'):
-                    new_href = link['href'].removeprefix('Lowe_9780804137133_epub_')
-                    link['href'] = new_href
+        if link.has_attr('href'):
+            new_href = link['href']
+            # 应用所有替换规则
+            for old, new in replacements.items():
+                new_href = new_href.replace(old, new)
+            link['href'] = new_href
 
     samps = para.find_all('samp')
     for s in range(len(samps)):
@@ -1999,20 +2247,205 @@ def restore_para(dst_para, preserved_tags):
 
 @timer_decorator
 @logger.catch
-def translate_epub(all_html_files, convert2html=False):
+def process_epub(all_html_files):
+    all_htmls = []
+    roi_htmls = []
+    roi_texts = []
+    console_htmls = []
+    span_classes = []
+    all_md = ''
+    all_words = []
+    handler_normal = HTML2Text()
+
+    # ================生成中文翻译目录================
+    if epub_dir.exists() and not cn_epub_dir.exists():
+        logger.debug(f'复制: {epub_dir} → {cn_epub_dir}')
+        copytree(epub_dir, cn_epub_dir)
+        all_cn_html_files = get_files(cn_epub_dir, 'html')
+        # ================删除网页文件================
+        for a in range(len(all_cn_html_files)):
+            cn_html = all_cn_html_files[a]
+            if cn_html.exists():
+                os.remove(cn_html)
+
+    for a in range(len(all_html_files)):
+        src_html_file = all_html_files[a]
+        html_content = read_txt(src_html_file)
+        logger.warning(f'[{a + 1}/{len(all_html_files)}]{src_html_file=}')
+
+        target_md = handler_normal.handle(html_content).strip()
+        all_md += f"{lf}{target_md}{lf}"
+
+        soup = BeautifulSoup(html_content, 'lxml')
+
+        text = soup.get_text(separator=' ')
+        words = findall(r'\b\w+\b', text.lower())
+        all_words.extend(words)
+
+        roi_htmls_chapter = []
+        roi_texts_chapter = []
+        roi_tags = get_roi_tags(soup)
+        for p in range(len(roi_tags)):
+            para = roi_tags[p]
+            roi_raw_html = str(para)
+            roi_text = para.get_text(strip=True)
+            if p_format == 'raw':
+                roi_html = roi_raw_html
+            elif p_format == 'text':
+                roi_html = roi_text
+            else:  # if p_format == 'raw_simple'
+                roi_html, span_classes, preserved_tags = get_roi_html(para, span_classes)
+            all_htmls.append(roi_raw_html)
+
+            if check2ignore(para):
+                pass
+            else:
+                roi_htmls_chapter.append(roi_html)
+                roi_texts_chapter.append(roi_text)
+
+                console_html = sub(r'(<\/?[\w\s="]+>)', r'\033[1;31m\1\033[0m', roi_html)
+                console_html = highlight(roi_html, HtmlLexer(), TerminalFormatter())
+                console_htmls.append(console_html)
+        roi_htmls.extend(roi_htmls_chapter)
+        roi_texts.extend(roi_texts_chapter)
+
+    # 打印提取的文本
+    for c in range(len(console_htmls)):
+        console_html = console_htmls[c]
+        print(f"---[{c + 1}]{lf}{lf}{console_html.strip()}{lf}")
+    logger.debug(f'{len(roi_htmls)=}')
+
+    span_classes = reduce_list(span_classes)
+    span_classes.sort()
+    for s in range(len(span_classes)):
+        span_class = span_classes[s]
+        # logger.warning(f'{span_class}')
+
+    word_count = Counter(all_words)
+    total_word_count = sum(word_count.values())
+
+    average_reading_speed = 250
+    est_time = total_word_count / average_reading_speed
+
+    # 输出统计结果
+    print(f"总词数: {total_word_count}")
+    print(f"不重复词数: {len(word_count)}")
+    print(f"预计阅读时间: {est_time:.2f}分钟")
+    write_txt(md_file, all_md)
+
+
+def get_para_segments(para):
+    # 用于存储原始和替换后的片段
+    para_segments = []
+    # 当前处理的文本片段
+    current_text = ''
+    for element in para.contents:
+        if isinstance(element, str):
+            # 直接添加字符串到当前文本
+            current_text += element
+        else:
+            # 处理前一个累积的文本
+            if current_text:
+                # 这里可以进行翻译或其他处理
+                para_segments.append(current_text)
+                # 重置文本累积
+                current_text = ''
+            # 添加HTML元素
+            element_html = str(element)
+            para_segments.append(element_html)
+    # 确保最后一段文本被处理
+    if current_text:
+        para_segments.append(current_text)
+    if show_list:
+        pprint(para_segments)
+    return para_segments
+
+
+@logger.catch
+def get_seg_htmls_chapter(para_segments):
+    seg_roi_htmls = [f'<p>{x}</p>' for x in para_segments]
+    seg_htmls_chapter = []
+    for s in range(len(seg_roi_htmls)):
+        # ================网页转soup================
+        seg_roi_html = seg_roi_htmls[s]
+        seg_soup = BeautifulSoup(seg_roi_html, 'lxml')
+        seg_p_tags = seg_soup.find_all('p')
+        if seg_p_tags:
+            seg_roi_tag = seg_p_tags[0]
+            if check2ignore(seg_roi_tag):
+                pass
+            else:
+                seg_htmls_chapter.append(seg_roi_html)
+    return seg_htmls_chapter
+
+
+@timer_decorator
+@logger.catch
+def translate_epub(all_html_files, do_convert=False):
+    all_opfs = get_files(epub_dir, '.opf')
+    all_ncxs = get_files(epub_dir, '.ncx')
+    # content_opf = all_opfs[0]
+
     activate_browser = True
     all_htmls = []
     roi_htmls = []
     roi_texts = []
     span_classes = []
 
-    for a in range(len(all_html_files)):
-        src_html = all_html_files[a]
-        src_txt = dst_dir / f'{src_html.stem}-en.txt'
-        dst_txt = dst_dir / f'{src_html.stem}.txt'
+    # ================目录================
+    if all_ncxs:
+        toc_ncx = all_ncxs[0]
+        dst_dir = Path(toc_ncx.parent.as_posix().replace(epub_name, f'{epub_name}-中文', 1))
+        cn_toc_ncx = dst_dir / toc_ncx.name
+        src_txt = dst_dir / f'{toc_ncx.stem}-en.txt'
+        dst_txt = dst_dir / f'{toc_ncx.stem}.txt'
 
-        html_content = read_txt(src_html)
-        # logger.warning(f'{src_html=}')
+        tree = ET.parse(toc_ncx)
+        root = tree.getroot()
+
+        # 定义命名空间，如果你的NCX文件有命名空间
+        namespaces = {
+            'ncx': 'http://www.daisy.org/z3986/2005/ncx/'
+        }
+
+        # 查找所有的文本元素，例如<navLabel>下的<text>
+        roi_htmls_chapter = []
+        roi_texts_chapter = []
+        for text_element in root.findall('.//ncx:navLabel/ncx:text', namespaces):
+            original_text = text_element.text
+            original_text = original_text.replace('\xa0', ' ').replace('\u2002', ' ')
+            roi_html = f'<p>{original_text}</p>'
+            text_soup = BeautifulSoup(roi_html, 'lxml')
+            text_roi_tags = text_soup.find_all('p')
+            if text_roi_tags:
+                text_roi_tag = text_roi_tags[0]
+                if check2ignore(text_roi_tag):
+                    pass
+                else:
+                    roi_htmls_chapter.append(roi_html)
+                    roi_texts_chapter.append(original_text)
+        roi_htmls.extend(roi_htmls_chapter)
+        roi_texts.extend(roi_texts_chapter)
+
+        src_text = lf.join(roi_texts_chapter)
+        # print(src_text)
+        # logger.debug(f'{src_txt=}')
+        write_txt(src_txt, src_text)
+
+        # ================谷歌翻译================
+        if do_google_translate and not dst_txt.exists():
+            translated_text = google_translate(roi_texts_chapter, target_lang)
+            write_txt(dst_txt, translated_text)
+
+    # ================所有网页================
+    for a in range(len(all_html_files)):
+        src_html_file = all_html_files[a]
+        dst_dir = Path(src_html_file.parent.as_posix().replace(epub_name, f'{epub_name}-中文', 1))
+        src_txt = dst_dir / f'{src_html_file.stem}-en.txt'
+        dst_txt = dst_dir / f'{src_html_file.stem}.txt'
+
+        html_content = read_txt(src_html_file)
+        # logger.warning(f'{src_html_file=}')
 
         soup = BeautifulSoup(html_content, 'lxml')
 
@@ -2033,8 +2466,35 @@ def translate_epub(all_html_files, convert2html=False):
 
             if check2ignore(para):
                 pass
+            elif len(str(para)) >= 2000:
+                # ================段落过长必须切割================
+                para_segments = get_para_segments(para)
+                seg_roi_htmls = [f'<p>{x}</p>' for x in para_segments]
+                seg_htmls_chapter = []
+                for s in range(len(seg_roi_htmls)):
+                    # ================网页转soup================
+                    seg_roi_html = seg_roi_htmls[s]
+                    seg_soup = BeautifulSoup(seg_roi_html, 'lxml')
+                    seg_p_tags = seg_soup.find_all('p')
+                    for s in range(len(seg_p_tags)):
+                        # ================soup转tag================
+                        seg_roi_tag = seg_p_tags[s]
+                        if check2ignore(seg_roi_tag):
+                            pass
+                        else:
+                            seg_htmls_chapter.append(seg_roi_html)
+                roi_htmls_chapter.extend(seg_htmls_chapter)
+                roi_texts_chapter.append(roi_text)
             else:
-                roi_htmls_chapter.append(roi_html)
+                # ================根据链接所占比例决定是否切割================
+                para_segments = get_para_segments(para)
+                segments_as = [x for x in para_segments if x.startswith('<a')]
+                if segments_as and len(str(para)) <= len(segments_as) * 100:
+                    #  说明链接含量比较多
+                    seg_htmls_chapter = get_seg_htmls_chapter(para_segments)
+                    roi_htmls_chapter.extend(seg_htmls_chapter)
+                else:
+                    roi_htmls_chapter.append(roi_html)
                 roi_texts_chapter.append(roi_text)
 
         roi_htmls.extend(roi_htmls_chapter)
@@ -2047,208 +2507,207 @@ def translate_epub(all_html_files, convert2html=False):
 
         # ================谷歌翻译================
         if do_google_translate and not dst_txt.exists():
-            logger.debug(f'[{a + 1}/{len(all_html_files)}]{src_html=}]')
+            logger.debug(f'[{a + 1}/{len(all_html_files)}]{src_html_file=}]')
             translated_text = google_translate(roi_texts_chapter, target_lang)
             write_txt(dst_txt, translated_text)
 
     # ================GPT4翻译================
     if do_gpt_translate:
-        # ================排除已经翻译的部分================
-        need2trans_lines = []
-        for r in range(len(roi_htmls)):
-            roi_html = roi_htmls[r]
+        gpt_translate(roi_htmls, prompt_prefix)
+
+    if do_convert:
+        if all_ncxs:
+            tree = ET.parse(toc_ncx)
+            root = tree.getroot()
+
+            # 定义命名空间，如果你的NCX文件有命名空间
+            namespaces = {
+                'ncx': 'http://www.daisy.org/z3986/2005/ncx/'
+            }
+
+            # 查找所有的文本元素，例如<navLabel>下的<text>
+            for text_element in root.findall('.//ncx:navLabel/ncx:text', namespaces):
+                original_text = text_element.text
+                original_text = original_text.replace('\xa0', ' ').replace('\u2002', ' ')
+                if original_text in main_gpt_dic:
+                    dst_content = main_gpt_dic[original_text]
+                elif original_text in sub_gpt_dic:
+                    dst_content = sub_gpt_dic[original_text]
+                else:
+                    logger.error(f'{original_text=}')
+                    dst_content = original_text
+                text_element.text = dst_content
+
+            # 保存修改后的NCX文件
+            tree.write(cn_toc_ncx, encoding='utf-8', xml_declaration=True, pretty_print=True)
+
+        # ================转换成翻译好的网页================
+        if do_gpt_translate:
+            for a in range(len(all_html_files)):
+                src_html_file = all_html_files[a]
+                dst_dir = Path(src_html_file.parent.as_posix().replace(epub_name, f'{epub_name}-中文', 1))
+                dst_html_file = dst_dir / f'{src_html_file.stem}.html'
+                html_content = read_txt(src_html_file)
+                # logger.warning(f'{src_html_file=}')
+                soup = BeautifulSoup(html_content, 'lxml')
+
+                # ================生成翻译好的网页================
+                roi_htmls_chapter = []
+                roi_tags = get_roi_tags(soup)
+                dst_lines = []
+                trans_len = 0
+                for p in range(len(roi_tags)):
+                    para = roi_tags[p]
+                    roi_raw_html = str(para)
+                    roi_text = para.get_text(strip=True)
+                    if p_format == 'raw':
+                        roi_html = roi_raw_html
+                    elif p_format == 'text':
+                        roi_html = roi_text
+                    else:  # if p_format == 'raw_simple':
+                        roi_html, span_classes, preserved_tags = get_roi_html(para, span_classes)
+                    all_htmls.append(roi_raw_html)
+
+                    if check2ignore(para):
+                        pass
+                    else:
+                        roi_htmls_chapter.append(roi_html)
+                        do_split = False
+                        para_segments = get_para_segments(para)
+                        if len(str(para)) >= 2000:
+                            # ================段落过长必须切割================
+                            if len(para_segments) >= 2:
+                                do_split = True
+                        else:
+                            # ================根据链接所占比例决定是否切割================
+                            segments_as = [x for x in para_segments if x.startswith('<a')]
+                            if segments_as and len(str(para)) <= len(segments_as) * 100:
+                                do_split = True
+                        src_soup = BeautifulSoup(roi_html, 'html.parser')
+                        src_1st_tag = src_soup.find()
+                        src_opening = roi_html.split('>')[0] + '>'
+                        src_closing = f"</{src_1st_tag.name}>"
+                        src_content = roi_html.removeprefix(src_opening).removesuffix(src_closing)
+                        src_content = src_content.replace('\xa0', ' ').replace('\u2002', ' ')
+                        if do_split:
+                            trans_segments = []
+                            for s in range(len(para_segments)):
+                                segment = para_segments[s]
+                                trans_segment = main_gpt_dic.get(segment, segment)
+                                trans_segments.append(trans_segment)
+                            dst_content = ''.join(trans_segments)
+                            dst_line = f'{src_opening}{dst_content}{src_closing}'
+                            trans_len += 1
+                        else:
+                            src_line = roi_html
+                            if src_content in main_gpt_dic:
+                                dst_line = get_dst_line(main_gpt_dic, src_line)
+                                trans_len += 1
+                            elif src_content in sub_gpt_dic:
+                                dst_line = get_dst_line(sub_gpt_dic, src_line)
+                                trans_len += 1
+                            else:
+                                logger.error(f'{src_line=}')
+                                dst_line = src_line
+                        dst_lines.append(dst_line)
+                # ================确定翻译完再生成================
+                if trans_len >= 0.996 * len(roi_htmls_chapter):
+                    dst_html_text = lf.join(dst_lines)
+                    print(dst_html_text)
+                    write_txt(dst_html_file, dst_html_text)
+
+
+@logger.catch
+def get_dst_html_text(src_html_file, bilingual=False):
+    # logger.warning(f'{src_html_file=}')
+    html_content = read_txt(src_html_file)
+    span_classes = []
+    soup = BeautifulSoup(html_content, 'lxml')
+    replace_tups = []
+    roi_htmls_chapter = []
+    roi_texts_chapter = []
+    roi_tags = get_roi_tags(soup)
+    # ================电子书翻译================
+    for p in range(len(roi_tags)):
+        para = roi_tags[p]
+        roi_raw_html = str(para)
+        roi_text = para.get_text(strip=True)
+        preserved_tags = {}
+        if p_format == 'raw':
+            roi_html = roi_raw_html
+        elif p_format == 'text':
+            roi_html = roi_text
+        else:  # if p_format == 'raw_simple'
+            roi_html, span_classes, preserved_tags = get_roi_html(para, span_classes)
+
+        if check2ignore(para):
+            pass
+        else:
+            do_split = False
+            para_segments = get_para_segments(para)
+            if len(str(para)) >= 2000:
+                # ================段落过长必须切割================
+                if len(para_segments) >= 2:
+                    do_split = True
+            else:
+                # ================根据链接所占比例决定是否切割================
+                segments_as = [x for x in para_segments if x.startswith('<a')]
+                if segments_as and len(str(para)) <= len(segments_as) * 100:
+                    do_split = True
             src_soup = BeautifulSoup(roi_html, 'html.parser')
             src_1st_tag = src_soup.find()
             src_opening = roi_html.split('>')[0] + '>'
             src_closing = f"</{src_1st_tag.name}>"
             src_content = roi_html.removeprefix(src_opening).removesuffix(src_closing)
-            if src_content not in main_gpt_dic:
-                need2trans_lines.append(roi_html)
-        need2trans_lines = reduce_list(need2trans_lines)
-        html_text = lf.join(need2trans_lines)
-        split_lines_raw = get_split_lines(html_text)
-        split_lines_raw = [x for x in split_lines_raw if x != []]
-        split_lines = []
-        # ================添加提示词================
-        for s in range(len(split_lines_raw)):
-            input_lines = split_lines_raw[s]
-            input_text = lf.join(input_lines)
-            full_prompt = f'{prompt_prefix}{lf}```html{lf}{input_text}{lf}```'
-            possible_divs = [x for x in target_tups if x[0] == '用户' and full_prompt in x[-1]]
-            if possible_divs and False:
-                # ================已经提问的段落================
-                logger.debug(full_prompt)
-                possible_div = possible_divs[0]
-                possible_ind = target_tups.index(possible_div)
-                logger.warning(f'已经提问[{s + 1}/{len(split_lines_raw)}], {possible_ind=}')
+            src_content = src_content.replace('\xa0', ' ').replace('\u2002', ' ')
+            if do_split:
+                trans_segments = []
+                for s in range(len(para_segments)):
+                    segment = para_segments[s]
+                    trans_segment = main_gpt_dic.get(segment, segment)
+                    trans_segments.append(trans_segment)
+                src_closing = f"</{src_1st_tag.name}>"
+                dst_content = ''.join(trans_segments)
+                dst_html = f'{src_opening}{dst_content}{src_closing}'
             else:
-                # ================尚未提问的段落================
-                split_lines.append(input_lines)
-                if len(split_lines) <= max_limit:
-                    logger.warning(f'尚未提问[{s + 1}/{len(split_lines_raw)}], {len(input_lines)=}, {len(input_text)=}')
-                    logger.info(full_prompt)
-        if do_automate and split_lines:
-            if ask_mode == 'web':
-                for s in range(len(split_lines)):
-                    input_lines = split_lines[s]
-                    input_text = lf.join(input_lines)
-                    full_prompt = f'{prompt_prefix}{lf}```html{lf}{input_text}{lf}```'
-                    fill_textarea(browser, full_prompt, activate_browser, hit_enter)
-                    if s != len(split_lines):
-                        stime = web_answer_time
-                    else:
-                        # 最后一次等待时间
-                        stime = int(0.6 * web_answer_time)
-                    break
-                    # 等待回答完成
-                    sleep(stime)
-            else:
-                for s in range(len(split_lines)):
-                    input_lines = split_lines[s]
-                    input_text = lf.join(input_lines)
-                    full_prompt = f'{prompt_prefix}{lf}```html{lf}{input_text}{lf}```'
-                    if s < max_limit:
-                        logger.warning(
-                            f'[{s + 1}/{len(split_lines_raw)}], {len(input_lines)=}, {len(input_text)=}')
-                        logger.info(full_prompt)
-                        retry_location = find_n_click(retry_logo)
-                        if retry_location:
-                            logger.error(f'{retry_location=}')
-                            warn_user('需重试')
-                            break
-                        reconnect_location = find_n_click(reconnect_logo)
-                        if reconnect_location:
-                            logger.error(f'{reconnect_location=}')
-                            warn_user('需重连')
-                            sleep(10)  # 等待用户手动处理
-                            reconnect_location = find_n_click(reconnect_logo)
-                            if reconnect_location:
-                                logger.error(f'{reconnect_location=}')
-                                warn_user('需重连')
-                                break
-
-                        # 调取浏览器或应用到前台
-                        activate_app(app_name, 4)
-                        sleep(0.2)
-                        # 粘贴prompt
-                        pyperclip.copy(full_prompt)
-                        sleep(0.05)
-                        as_proc(as_paste)
-                        sleep(1)
-
-                        if hit_enter:
-                            # 按下回车键
-                            keyDown('enter')
-                            sleep(0.1)
-                            keyUp('enter')
-
-                            sleep(2)
-
-                            up_arrow_location = find_n_click(up_arrow_logo)
-                            if up_arrow_location:
-                                logger.error(f'{up_arrow_location=}')
-                                warn_user('没按出回车')
-                                break
-
-                            sleep(3)
-                            retry_location = find_n_click(retry_logo)
-                            if retry_location:
-                                logger.error(f'{retry_location=}')
-                                warn_user('需重试')
-                                break
-
-                            if s == max_limit - 1:
-                                # ================所有图片上传完毕================
-                                as_proc(as_submarine)
-                                as_proc(as_Tingting_uploaded)
-                                break
-
-                            # 等待回答
-                            for _ in tqdm(range(int(app_answer_time / 5)), desc="等待"):
-                                sleep(5)
-                            # sleep(app_answer_time)
-
-                            # ================确保答案已经生成完毕================
-                            headphone_location = None
-                            for a in range(50):
-                                # 找到屏幕上的图片位置
-                                headphone_location = find_n_click(headphone_logo)
-                                if headphone_location:
-                                    # 如果找到就不再等待
-                                    logger.info(f'{headphone_location=}')
-                                    break
-                                else:
-                                    sleep(2)
-                            if not headphone_location:
-                                warn_user('答案未生成完毕')
-                                break
-                        else:
-                            warn_user('用户设定不再继续')
-                            break
-    logger.warning(f'chatGPT翻译完成, {len(split_lines)=}')
-
-    if convert2html:
-        # ================转换成翻译好的网页================
-        for a in range(len(all_html_files)):
-            src_html = all_html_files[a]
-            dst_html = dst_dir / f'{src_html.stem}.html'
-            html_content = read_txt(src_html)
-            # logger.warning(f'{src_html=}')
-            soup = BeautifulSoup(html_content, 'lxml')
-
-            roi_htmls_chapter = []
-            roi_texts_chapter = []
-            roi_tags = get_roi_tags(soup)
-            for p in range(len(roi_tags)):
-                para = roi_tags[p]
-                roi_raw_html = str(para)
-                roi_text = para.get_text(strip=True)
-                if p_format == 'raw':
-                    roi_html = roi_raw_html
-                elif p_format == 'text':
-                    roi_html = roi_text
-                else:  # if p_format == 'raw_simple':
-                    roi_html, span_classes, preserved_tags = get_roi_html(para, span_classes)
-                all_htmls.append(roi_raw_html)
-
-                if check2ignore(para):
-                    pass
-                else:
-                    roi_htmls_chapter.append(roi_html)
-                    roi_texts_chapter.append(roi_text)
-
-            # ================生成翻译好的网页================
-            if do_gpt_translate and not dst_html.exists():
-                dst_lines = []
-                trans_len = 0
-                for i in range(len(roi_htmls_chapter)):
-                    src_line = roi_htmls_chapter[i]
-                    src_soup = BeautifulSoup(src_line, 'html.parser')
-                    src_1st_tag = src_soup.find()
-                    src_opening = src_line.split('>')[0] + '>'
-                    src_closing = f"</{src_1st_tag.name}>"
-                    src_content = src_line.removeprefix(src_opening).removesuffix(src_closing)
+                if src_content in main_gpt_dic or src_content in sub_gpt_dic:
                     if src_content in main_gpt_dic:
-                        dst_line = get_dst_line(main_gpt_dic, src_line)
-                        trans_len += 1
-                    elif src_content in sub_gpt_dic:
-                        dst_line = get_dst_line(sub_gpt_dic, src_line)
-                        trans_len += 1
+                        dst_html = get_dst_line(main_gpt_dic, roi_html, bilingual)
                     else:
-                        dst_line = src_line
-                    dst_lines.append(dst_line)
-                # ================确定翻译完再生成================
-                if trans_len >= 0.996 * len(roi_htmls_chapter):
-                    dst_html_text = lf.join(dst_lines)
-                    print(dst_html_text)
-                    write_txt(dst_html, dst_html_text)
+                        dst_html = get_dst_line(sub_gpt_dic, roi_html, bilingual)
+                else:
+                    dst_html = roi_html
+            if dst_html != roi_html:
+                # 解析目标HTML
+                dst_soup = BeautifulSoup(dst_html, 'lxml')
+                # 寻找与原标签同类型的标签
+                dst_para = dst_soup.find(para.name)
+                # 恢复完整
+                dst_para = restore_para(dst_para, preserved_tags)
+                if not do_split and para.name == 'li':
+                    replace_tup = (roi_raw_html, str(dst_para))
+                    replace_tups.append(replace_tup)
+                para.replace_with(dst_para)
+            roi_htmls_chapter.append(roi_html)
+            roi_texts_chapter.append(roi_text)
+
+    dst_html_text = str(soup)
+    dst_html_text = dst_html_text.replace('</p><p>', '</p>\n<p>')
+    for replace_tup in replace_tups:
+        roi_raw_html, dst_para_str = replace_tup
+        logger.info(f'{roi_raw_html}')
+        logger.debug(f'{dst_para_str}')
+        dst_html_text = dst_html_text.replace(roi_raw_html, dst_para_str, 1)
+    return dst_html_text, roi_htmls_chapter
 
 
 @timer_decorator
 @logger.catch
 def format_epub(all_html_files):
-    roi_htmls = []
-    span_classes = []
+    all_opfs = get_files(epub_dir, '.opf')
+    all_ncxs = get_files(epub_dir, '.ncx')
+
+    # ================允许用户修改翻译================
     if source_html.exists() and user_dest_htm.exists():
         # ================原文================
         source_text = read_txt(source_html)
@@ -2263,77 +2722,66 @@ def format_epub(all_html_files):
             main_gpt_dic[source_line] = destline
 
     all_translated_lines = []
-    for a in range(len(all_html_files)):
-        src_html = all_html_files[a]
-        dst_xhtml = dst_dir / f'{src_html.stem}.xhtml'
-        dst_txt = dst_dir / f'{src_html.stem}.txt'
-        translated_text = read_txt(dst_txt)
-        translated_lines = translated_text.splitlines()
-        translated_lines = [x for x in translated_lines if x.strip() != '']
-        all_translated_lines.extend(translated_lines)
+    roi_htmls = []
 
-        html_content = read_txt(src_html)
-        # logger.warning(f'{src_html=}')
+    # ================目录================
+    if all_ncxs:
+        toc_ncx = all_ncxs[0]
+        dst_dir = Path(toc_ncx.parent.as_posix().replace(epub_name, f'{epub_name}-中文', 1))
+        cn_toc_ncx = dst_dir / toc_ncx.name
+        dst_txt = dst_dir / f'{toc_ncx.stem}.txt'
 
-        if not dst_xhtml.exists() or True:
-            soup = BeautifulSoup(html_content, 'lxml')
-            replace_tups = []
-            roi_htmls_chapter = []
-            roi_texts_chapter = []
-            roi_tags = get_roi_tags(soup)
-            # ================电子书翻译================
-            for p in range(len(roi_tags)):
-                para = roi_tags[p]
-                roi_raw_html = str(para)
-                roi_text = para.get_text(strip=True)
-                preserved_tags = {}
-                if p_format == 'raw':
-                    roi_html = roi_raw_html
-                elif p_format == 'text':
-                    roi_html = roi_text
-                else:  # if p_format == 'raw_simple'
-                    roi_html, span_classes, preserved_tags = get_roi_html(para, span_classes)
+        tree = ET.parse(toc_ncx)
+        root = tree.getroot()
 
-                if check2ignore(para):
+        # 定义命名空间，如果你的NCX文件有命名空间
+        namespaces = {
+            'ncx': 'http://www.daisy.org/z3986/2005/ncx/'
+        }
+
+        # 查找所有的文本元素，例如<navLabel>下的<text>
+        roi_texts_chapter = []
+        for text_element in root.findall('.//ncx:navLabel/ncx:text', namespaces):
+            original_text = text_element.text
+            original_text = original_text.replace('\xa0', ' ').replace('\u2002', ' ')
+            roi_html = f'<p>{original_text}</p>'
+            text_soup = BeautifulSoup(roi_html, 'lxml')
+            text_roi_tags = text_soup.find_all('p')
+            if text_roi_tags:
+                text_roi_tag = text_roi_tags[0]
+                if check2ignore(text_roi_tag):
                     pass
                 else:
-                    roi_htmls_chapter.append(roi_html)
-                    roi_texts_chapter.append(roi_text)
+                    roi_texts_chapter.append(roi_html)
+        roi_htmls.extend(roi_texts_chapter)
 
-                src_soup = BeautifulSoup(roi_html, 'html.parser')
-                src_1st_tag = src_soup.find()
-                src_opening = roi_html.split('>')[0] + '>'
-                src_closing = f"</{src_1st_tag.name}>"
-                src_content = roi_html.removeprefix(src_opening).removesuffix(src_closing)
-                if src_content in main_gpt_dic or src_content in sub_gpt_dic:
-                    if src_content in main_gpt_dic:
-                        dst_html = get_dst_line(main_gpt_dic, roi_html)
-                    else:
-                        dst_html = get_dst_line(sub_gpt_dic, roi_html)
-                    # logger.debug(f'{dst_html=}')
-                    # 解析目标HTML
-                    dst_soup = BeautifulSoup(dst_html, 'lxml')
-                    # 寻找与原标签同类型的标签
-                    dst_para = dst_soup.find(para.name)
-                    # 恢复完整
-                    dst_para = restore_para(dst_para, preserved_tags)
-                    if para.name == 'li':
-                        replace_tup = (roi_raw_html, str(dst_para))
-                        replace_tups.append(replace_tup)
-                    para.replace_with(dst_para)
-                else:
-                    logger.error(f'{roi_html=}')
-                    dst_html = roi_html
+        translated_text = read_txt(dst_txt)
+        if translated_text:
+            translated_lines = translated_text.splitlines()
+            translated_lines = [x for x in translated_lines if x.strip() != '']
+            all_translated_lines.extend(translated_lines)
+        else:
+            logger.error(f'{dst_txt=}')
 
-            roi_htmls.extend(roi_htmls_chapter)
-            dst_html_text = str(soup)
-            dst_html_text = dst_html_text.replace('</p><p>', '</p>\n<p>')
-            for replace_tup in replace_tups:
-                roi_raw_html, dst_para_str = replace_tup
-                logger.info(f'{roi_raw_html}')
-                logger.debug(f'{dst_para_str}')
-                dst_html_text = dst_html_text.replace(roi_raw_html, dst_para_str, 1)
-            write_txt(dst_xhtml, dst_html_text)
+    # ================所有网页================
+    for a in range(len(all_html_files)):
+        src_html_file = all_html_files[a]
+        dst_dir = Path(src_html_file.parent.as_posix().replace(epub_name, f'{epub_name}-中文', 1))
+        dst_xhtml_file = dst_dir / f'{src_html_file.stem}.xhtml'
+        dst_bi_xhtml_file = dst_dir / f'{src_html_file.stem}-bilingual.xhtml'
+        dst_txt = dst_dir / f'{src_html_file.stem}.txt'
+        translated_text = read_txt(dst_txt)
+        if translated_text:
+            translated_lines = translated_text.splitlines()
+            translated_lines = [x for x in translated_lines if x.strip() != '']
+            all_translated_lines.extend(translated_lines)
+        else:
+            logger.error(f'{dst_txt=}')
+        dst_html_text, roi_htmls_chapter = get_dst_html_text(src_html_file)
+        dst_bi_html_text, roi_htmls_chapter = get_dst_html_text(src_html_file, bilingual=True)
+        roi_htmls.extend(roi_htmls_chapter)
+        write_txt(dst_xhtml_file, dst_html_text)
+        write_txt(dst_bi_xhtml_file, dst_bi_html_text)
 
     # ================原文================
     # roi_htmls = reduce_list(roi_htmls)
@@ -2353,6 +2801,7 @@ def format_epub(all_html_files):
         src_opening = src_line.split('>')[0] + '>'
         src_closing = f"</{src_1st_tag.name}>"
         src_content = src_line.removeprefix(src_opening).removesuffix(src_closing)
+        src_content = src_content.replace('\xa0', ' ').replace('\u2002', ' ')
         if src_content in main_gpt_dic:
             dst_line = get_dst_line(main_gpt_dic, src_line)
         elif src_content in sub_gpt_dic:
@@ -2392,9 +2841,206 @@ def review_epub():
             logger.debug(destline)
 
 
+@timer_decorator
+@logger.catch
+def generate_epub(epub_name, bilingual=False):
+    epub_dir = BookHTML / epub_name
+    cn_epub_file = BookHTML / f'{epub_name}-GPT4翻译.epub'
+    bi_epub_file = BookHTML / f'{epub_name}-双语.epub'
+
+    if bilingual:
+        output_epub_file = bi_epub_file
+    else:
+        output_epub_file = cn_epub_file
+
+    all_files = get_files(epub_dir)
+    all_html_files = get_files(epub_dir, 'html')
+    mimetype_file = epub_dir / 'mimetype'
+
+    all_opfs = get_files(epub_dir, '.opf')
+    all_ncxs = get_files(epub_dir, '.ncx')
+    # content_opf = all_opfs[0]
+
+    other_files = [x for x in all_files if x != mimetype_file]
+    other_files = [x for x in other_files if x not in all_html_files]
+
+    if show_list:
+        pprint(all_files)
+        pprint(other_files)
+
+    if all_ncxs:
+        toc_ncx = all_ncxs[0]
+        dst_dir = Path(toc_ncx.parent.as_posix().replace(epub_name, f'{epub_name}-中文', 1))
+        cn_toc_ncx = dst_dir / toc_ncx.name
+        other_files = [x for x in other_files if x != toc_ncx]
+
+    if not output_epub_file.exists():
+        with ZipFile(output_epub_file, 'w') as epub_file:
+            # ================文件类型头================
+            epub_file.write(mimetype_file.as_posix(), 'mimetype', compress_type=ZIP_STORED)
+            # ================其他文件================
+            for o in range(len(other_files)):
+                file_path = other_files[o]
+                archive_path = os.path.relpath(file_path, epub_dir)
+                logger.debug(f'{file_path}->{archive_path}')
+                epub_file.write(file_path, archive_path, compress_type=ZIP_DEFLATED)
+            # ================网页文件================
+            for a in range(len(all_html_files)):
+                src_html_file = all_html_files[a]
+                archive_path = os.path.relpath(src_html_file, epub_dir)
+                dst_dir = Path(src_html_file.parent.as_posix().replace(epub_name, f'{epub_name}-中文', 1))
+                if bilingual:
+                    dst_xhtml = dst_dir / f'{src_html_file.stem}-bilingual.xhtml'
+                else:
+                    dst_xhtml = dst_dir / f'{src_html_file.stem}.xhtml'
+                if dst_xhtml.exists():
+                    file_path = dst_xhtml
+                else:
+                    logger.error(f'{dst_xhtml}')
+                    file_path = src_html_file
+                logger.debug(f'{file_path}->{archive_path}')
+                epub_file.write(file_path, archive_path, compress_type=ZIP_DEFLATED)
+            # ================目录================
+            if all_ncxs:
+                toc_ncx = all_ncxs[0]
+                archive_path = os.path.relpath(toc_ncx, epub_dir)
+                dst_dir = Path(toc_ncx.parent.as_posix().replace(epub_name, f'{epub_name}-中文', 1))
+                cn_toc_ncx = dst_dir / toc_ncx.name
+                logger.debug(f'{cn_toc_ncx}->{archive_path}')
+                epub_file.write(cn_toc_ncx, archive_path, compress_type=ZIP_DEFLATED)
+        logger.warning(f'已生成{output_epub_file.name}')
+
+
+@timer_decorator
+@logger.catch
+def html2epub(epub_name):
+    epub_dir = BookHTML / epub_name
+    # cn_epub_dir = BookHTML / f'{epub_name}-中文'
+
+    logger.warning(f'{epub_dir=}')
+
+    all_files = get_files(epub_dir)
+    all_html_files = get_files(epub_dir, 'html')
+    mimetype_file = epub_dir / 'mimetype'
+
+    all_opfs = get_files(epub_dir, '.opf')
+    all_ncxs = get_files(epub_dir, '.ncx')
+
+    other_files = [x for x in all_files if x != mimetype_file]
+    other_files = [x for x in other_files if x not in all_html_files]
+
+    if all_ncxs:
+        toc_ncx = all_ncxs[0]
+        dst_dir = Path(toc_ncx.parent.as_posix().replace(epub_name, f'{epub_name}-中文', 1))
+        cn_toc_ncx = dst_dir / toc_ncx.name
+        other_files = [x for x in other_files if x != toc_ncx]
+
+    if show_list:
+        pprint(all_files)
+        pprint(other_files)
+
+    if all_opfs:
+        content_opf = all_opfs[0]
+        # 读取OPF文件
+        tree = ET.parse(content_opf)
+        root = tree.getroot()
+        # 命名空间，必须匹配OPF文件中的命名空间定义
+        namespaces = {
+            'opf': 'http://www.idpf.org/2007/opf'
+        }
+        # 获取命名空间映射
+        namespaces_from_file = dict([
+            node for _, node in ET.iterparse(content_opf, events=['start-ns'])
+        ])
+        # 打印所有命名空间
+        print("Namespaces in the document:", namespaces_from_file)
+
+        # 读取manifest元素下的所有item元素
+        for item in root.findall('./opf:manifest/opf:item', namespaces):
+            item_id = item.get('id')  # 获取item的id属性
+            item_href = item.get('href')  # 获取item的href属性，即文件路径
+            item_type = item.get('media-type')  # 获取item的media-type属性
+            logger.debug(f'Item ID: {item_id}, HREF: {item_href}, Media Type: {item_type}')
+
+    generate_epub(epub_name)
+    generate_epub(epub_name, bilingual=True)
+
+
+@logger.catch
+def get_roi_dir(epub_dir):
+    OEBPS = epub_dir / 'OEBPS'
+    OPS = epub_dir / 'OPS'
+    ops = epub_dir / 'ops'
+    outer_sub_dirs = get_dirs(epub_dir)
+    ignore_names = ['META-INF', 'images']
+    roi_outer_sub_dirs = [x for x in outer_sub_dirs if x.name not in ignore_names]
+    if OEBPS.exists():
+        ops_dir = OEBPS
+    elif OPS.exists():
+        ops_dir = OPS
+    elif ops.exists():
+        ops_dir = ops
+    elif roi_outer_sub_dirs:
+        ops_dir = roi_outer_sub_dirs[0]
+    else:
+        ops_dir = epub_dir
+
+    xhtml = ops_dir / 'xhtml'
+    text = ops_dir / 'text'
+    Text = ops_dir / 'Text'
+    if xhtml.exists():
+        src_dir = xhtml
+    elif text.exists():
+        src_dir = text
+    elif Text.exists():
+        src_dir = Text
+    else:
+        src_dir = ops_dir
+    logger.debug(f'{ops_dir=}')
+    return src_dir
+
+
+# @logger.catch
+@timer_decorator
+def generate_requirements(py_path, python_vs):
+    """
+    生成给定Python文件中使用的非标准库的列表。
+
+    :param py_path: 要分析的Python文件的路径。
+    :param python_vs: Python版本的元组，默认为当前Python版本。
+    :return: requirements文本内容
+    """
+    # 获取已安装的包及其版本
+    installed_packages = {pkg.key: pkg.version for pkg in pkg_resources.working_set}
+    # 获取标准库模块列表
+    stdlib_modules = set(stdlib_list(python_vs))
+
+    # 读取Python文件并解析语法树
+    py_text = read_txt(py_path)
+    root = parse(py_text)
+
+    imports = []
+    # 遍历语法树，提取import语句
+    for node in walk(root):
+        if isinstance(node, Import):
+            imports.extend([alias.name for alias in node.names])
+        elif isinstance(node, ImportFrom):
+            if node.level == 0:
+                imports.append(node.module)
+    imported_modules = set(imports)
+    requirements = []
+
+    # 对于导入的每个模块，检查是否为非标准库模块
+    for module in imported_modules:
+        if module in installed_packages and module not in stdlib_modules:
+            requirements.append(module)
+    requirements.sort()
+    requirements_text = lf.join(requirements)
+    return requirements_text
+
+
 def z():
     pass
-
 
 
 browser = 'Google Chrome'
@@ -2405,16 +3051,14 @@ ask_mode = 'app'
 sleep_minute = 3
 web_answer_time = sleep_minute * 60
 app_answer_time = 10
-
-gpt_line_max = 50
-# gpt_char_max = 3200
-gpt_char_max = 3600
+wait_range = 60
 
 censor_words = [
     'naked',
     'rape',
     'pedophile',
     'pedophiles',
+    'virginity',
 ]
 
 computer_marker = f'{processor_name}_{ram}GB'
@@ -2424,18 +3068,30 @@ prompt_prefix = '您是一位专业翻译家，精通中文和英文。您的任
 
 epub_name = 'your_epub_name'
 
-ignore_models = ['3.5']
-
-# max_limit = 35
-max_limit = 75
+ignore_models = [
+    '3.5',
+    '4o mini',
+]
 
 browser = 'Google Chrome'
+browser_type = 'Chrome'
 
 # do_automate = True
 do_automate = False
 
 # hit_enter = True
 hit_enter = False
+
+allow_en_names = True
+# allow_en_names = False
+
+force_gpt4 = True
+# force_gpt4 = False
+
+gpt_line_max = 30
+gpt_char_max = 3600
+# max_limit = 75
+max_limit = 275
 
 local_name = 'your_html_name'
 
@@ -2465,6 +3121,8 @@ if __name__ == "__main__":
     retry_logo = ChatGPTApp / '重试.png'
     reconnect_logo = ChatGPTApp / '重连.png'
     continue_logo = ChatGPTApp / '继续生成.png'
+    your_limit_logo = ChatGPTApp / '您的限额.png'
+    ChatGPT4o_logo = ChatGPTApp / 'ChatGPT 4o >.png'
 
     ChatGPTApp_png = ChatGPTPic / 'ChatGPTApp.png'
 
@@ -2496,6 +3154,9 @@ if __name__ == "__main__":
 
 
     logger.warning(f'{os.cpu_count()=}')
+    logger.warning(f'{force_gpt4=}')
+    logger.warning(f'{gpt_line_max=}')
+    logger.warning(f'{gpt_char_max=}')
     logger.warning(f'{max_limit=}')
 
     click_type = 'pyautogui'
@@ -2552,6 +3213,9 @@ if __name__ == "__main__":
 
     global_start_time = time()
 
+    requirements_text = generate_requirements(py_path, python_vs)
+    print(requirements_text)
+
     info_tups = get_window_list()
     app_name = 'ChatGPT'
     ChatGPT_tups = [x for x in info_tups if x[1] == x[2] == app_name]
@@ -2569,56 +3233,33 @@ if __name__ == "__main__":
 
         epub_dir = BookHTML / epub_name
         cn_epub_dir = BookHTML / f'{epub_name}-中文'
-        OEBPS = epub_dir / 'OEBPS'
-        OPS = epub_dir / 'OPS'
-        ops = epub_dir / 'ops'
-        outer_sub_dirs = get_dirs(epub_dir)
-        roi_outer_sub_dirs = [x for x in outer_sub_dirs if x.name != 'META-INF']
-        if OEBPS.exists():
-            ops_dir = OEBPS
-        elif OPS.exists():
-            ops_dir = OPS
-        elif ops.exists():
-            ops_dir = ops
-        elif roi_outer_sub_dirs:
-            ops_dir = roi_outer_sub_dirs[0]
-        else:
-            ops_dir = epub_dir
-
-        xhtml = ops_dir / 'xhtml'
-        text = ops_dir / 'text'
-        Text = ops_dir / 'Text'
-        if xhtml.exists():
-            src_dir = xhtml
-        elif text.exists():
-            src_dir = text
-        elif Text.exists():
-            src_dir = Text
-        else:
-            src_dir = ops_dir
-        dst_dir = Path(src_dir.as_posix().replace(epub_name, cn_epub_dir.name, 1))
+        src_dir = get_roi_dir(epub_dir)
+        dst_dir = Path(src_dir.as_posix().replace(epub_name, f'{epub_name}-中文', 1))
 
         md_file = BookHTML / f'{epub_name}.md'
         source_html = BookHTML / f'{epub_name}.html'
         dest_htm = BookHTML / f'{epub_name}.htm'
         user_dest_htm = BookHTML / f'{epub_name}-用户.htm'
         dest_txt = BookHTML / f'{epub_name}.txt'
-        all_html_files = get_files(src_dir, 'html', True)
+        all_html_files = get_files(epub_dir, 'html')
 
         if show_list:
             pprint(all_html_files)
 
         if SYSTEM in ['MAC', 'M1']:
             target_tups = get_target_tups(browser)
-            main_gpt_dic, sub_gpt_dic = get_gpt_dic(target_tups)
+            if target_tups:
+                main_gpt_dic, sub_gpt_dic = get_gpt_dic(target_tups)
 
-            logger.warning(f'{epub_name=}')
-            logger.warning(f'{browser=}')
+                logger.warning(f'{epub_name=}')
+                logger.warning(f'{browser=}')
 
-            # process_epub(all_html_files)
-            translate_epub(all_html_files, convert2html=False)
-            # format_epub(all_html_files)
-            # review_epub()
+                if not md_file.exists():
+                    process_epub(all_html_files)
+                translate_epub(all_html_files, do_convert=False)
+                # format_epub(all_html_files)
+                # html2epub(epub_name)
+                # review_epub()
 
     show_run_time = run_time(global_start_time)
     logger.info(f'总耗时{show_run_time}')
