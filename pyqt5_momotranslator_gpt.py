@@ -4583,13 +4583,6 @@ new_break = ''
 if media_lang in ['English']:
     new_break = ' '
 
-do_cap = True
-
-# step_str = 'B'
-# step_str = 'C'
-step_str = '5'
-# step_str = 'R'
-
 browser = 'Google Chrome'
 # browser = 'Google Chrome Beta'
 browser_type = 'Chrome'
