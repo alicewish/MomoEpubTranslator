@@ -1871,7 +1871,7 @@ def get_ai_tups(browser, div_type='code'):
         names_to_process.append(None)
 
     if read_history:
-        names_to_process.extend(history_names)
+        names_to_process.extend(hnames)
 
     # 遍历所有需要处理的名称并获取 ai_tups
     for name in names_to_process:
@@ -2445,8 +2445,8 @@ dst_lang = 'Chinese'
 
 general_phead = get_phead(src_lang, dst_lang)
 
-claude_phead_en2cn_text = '请将以下英文翻译成优美的中文，在保持原文含义的基础上适当使用文学性的表达：'
-claude_phead_cn2en_text = '请将以下中文翻译成优美的英文，在保持原文含义的基础上适当使用文学性的表达：'
+claude_phead_en2cn_text = '请将以下内容翻译成优美的中文，在保持原文含义的基础上适当使用文学性的表达。'
+claude_phead_cn2en_text = claude_phead_en2cn_text.replace('中文', '英文')
 
 claude_phead_en2cn_html = f'你是文学翻译家，请将以下HTML文本翻译成中文，使用地道、优美的表达方式，在保持原文含义的基础上适当使用文学性的表达，不要省略任何内容，不添加任何额外的空行或换行，保持原有HTML标签和格式不变，直接输出翻译结果，人名和专有名词也要翻译成中文。'
 claude_phead_cn2en_html = claude_phead_en2cn_html.replace('中文', '英文')
@@ -2557,7 +2557,7 @@ def ask_ai_app(full_prompt, s=0):
         enter_mode = 'mouse'
 
     ChatGPT4o_location = find_n_click(ChatGPT4o_logo)
-    if force_gpt4:
+    if use_gpt4:
         if ChatGPT4o_location:
             logger.error(f'{ChatGPT4o_location=}')
             warn_user('已变成GPT4o')
@@ -2661,7 +2661,7 @@ def ask_ai_app(full_prompt, s=0):
 
 @logger.catch
 def openai_translate(roi_htmls, phead):
-    min_limit = round(min_skip / gpt_line_max)
+    min_limit = round(min_skip / ai_line_max)
     # ================排除已经翻译的部分================
     need2trans_lines = []
     roi_htmls = reduce_list(roi_htmls)
@@ -2735,7 +2735,7 @@ def openai_translate(roi_htmls, phead):
 
 @logger.catch
 def claude_translate(roi_htmls):
-    min_limit = round(min_skip / gpt_line_max)
+    min_limit = round(min_skip / ai_line_max)
     # ================排除已经翻译的部分================
     need2trans_lines = []
     for r in range(len(roi_htmls)):
@@ -2749,11 +2749,17 @@ def claude_translate(roi_htmls):
         p_roi_html = f'<p>{src_content}</p>'
         src_text = src_soup.get_text()
         src_text = format_src_content(src_text)
-        if src_content not in main_ai_dic and src_text.strip(' *') not in all_user_lines:
+        if src_content in main_ai_dic:
+            pass
+        elif src_text.strip(' *') in all_user_lines:
+            pass
+        elif src_text in ignore_texts:
+            pass
+        else:
             need2trans_lines.append(p_roi_html)
     need2trans_lines = reduce_list(need2trans_lines)
     html_text = lf.join(need2trans_lines)
-    split_lines_raw = get_split_lines(html_text, claude_char_max, claude_line_max)
+    split_lines_raw = get_split_lines(html_text, claude_char_max, ai_line_max)
     split_lines_raw = [x for x in split_lines_raw if x != []]
 
     split_lines = []
@@ -3239,7 +3245,10 @@ def check2ignore_en(para):
         # 检查文本中英文字母数量是否小于或等于1
         return True
     elif len(cn_chars) >= 3:
-        # 检查中文字符数量是否大于等于4
+        # 检查中文字符数量是否大于等于3
+        return True
+    elif len(cn_chars) == len(roi_text_strip):
+        # 全是中文
         return True
     elif p_time.match(roi_text_strip):
         # 检查是否为形如12:10 AM的时间格式
@@ -3399,7 +3408,7 @@ def get_split_lines(html_text, input_char_max=None, input_line_max=None):
     if input_char_max:
         char_max = input_char_max
 
-    line_max = gpt_line_max
+    line_max = ai_line_max
     if input_line_max:
         line_max = input_line_max
 
@@ -4659,36 +4668,31 @@ allow_split = False
 allow_head = True
 # allow_head = False
 
-# force_gpt4 = True
-force_gpt4 = False
+# use_gpt4 = True
+use_gpt4 = False
 
 use_third = False
 
-gpt_line_max = 40
-# gpt_line_max = 30
-# gpt_line_max = 25
-# gpt_line_max = 20
-# gpt_line_max = 18
-# gpt_line_max = 15
-# gpt_line_max = 12
-# gpt_line_max = 10
-# gpt_line_max = 8
-# gpt_line_max = 5
-# gpt_line_max = 4
-# gpt_line_max = 3
-# gpt_line_max = 2
-# gpt_line_max = 1
+ai_line_max = 40
+# ai_line_max = 30
+# ai_line_max = 25
+# ai_line_max = 20
+# ai_line_max = 18
+# ai_line_max = 15
+# ai_line_max = 12
+# ai_line_max = 10
+# ai_line_max = 8
+# ai_line_max = 5
+# ai_line_max = 4
+# ai_line_max = 3
+# ai_line_max = 2
+# ai_line_max = 1
 gpt_char_max = 3200
+
+claude_char_max = 4000
 
 input_line_max = 5
 input_char_max = 3600
-
-claude_line_max = 40
-# claude_line_max = 12
-# claude_line_max = 10
-# claude_line_max = 4
-# claude_line_max = 3
-claude_char_max = 4000
 
 split_thres = 2000
 link_thres = 100
@@ -4829,18 +4833,18 @@ if __name__ == "__main__":
     for mode in mode_list:
         globals()[mode] = (do_mode == mode)
 
-    if force_gpt4:
+    if use_gpt4:
         ignore_models.append('4o')
         gpt_char_max = 2800
 
     logger.warning(f'{do_mode=}')
     logger.warning(f'{os.cpu_count()=}')
-    logger.warning(f'{force_gpt4=}')
-    logger.warning(f'{gpt_line_max=}')
+    logger.warning(f'{use_gpt4=}')
+    logger.warning(f'{ai_line_max=}')
     logger.warning(f'{gpt_char_max=}')
     logger.warning(f'{gpt_max_limit=}')
 
-    history_names = []
+    hnames = []
 
     click_type = 'pyautogui'
 
@@ -4938,7 +4942,7 @@ if __name__ == "__main__":
             allow_split = False
             all_user_lines = []
 
-            # force_gpt4 = True
+            # use_gpt4 = True
             # use_third = True
             if SYSTEM in ['MAC', 'M1']:
                 # ai_app_name = 'Claude'
@@ -4952,13 +4956,13 @@ if __name__ == "__main__":
             browser = 'Google Chrome'
             account_name = 'default'  # 如果你使用多个账号可以用来区分
             min_skip = 0
-            history_names = []
+            hnames = []
 
             logger.warning(f'{epub_name=}')
-            logger.debug(f'{force_gpt4=}')
+            logger.debug(f'{use_gpt4=}')
             logger.debug(f'{browser=}')
             logger.debug(f'{min_skip=}')
-            logger.debug(f'{history_names=}')
+            logger.debug(f'{hnames=}')
 
             epub_dir = BookHTML / epub_name
             epub_path = BookHTML / f'{epub_name}.epub'
