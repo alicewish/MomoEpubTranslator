@@ -42,6 +42,12 @@ use_gpt4 = False       # 使用GPT4
 
 然后确保你已将epub文件放到`/Users/your_username/Documents/默墨书籍/BookHTML`目录下。
 
+如果在Win上使用，需打开PowerShell运行如下命令打开远程调试Chrome。
+```bash
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\temp\chrome_debug"
+```
+然后在调试版Chrome中登录chatgpt网站，打开翻译用的对话。
+
 接着运行`pyqt5_momotranslator_gpt.py`文件：
 
 ```bash
