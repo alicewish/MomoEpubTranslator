@@ -1427,6 +1427,7 @@ def open_html_file_in_browser(file_path, browser):
 
 
 def get_tab_meta(current_tab):
+    current_url, web_title, html_content = None, None, None
     # 启动tab
     current_tab.start()
     # 启用所需的域
@@ -1440,16 +1441,19 @@ def get_tab_meta(current_tab):
     frame_tree = current_tab.Page.getFrameTree()
     frame_id = frame_tree['frameTree']['frame']['id']
     current_url = frame_tree['frameTree']['frame']['url']
-    content = current_tab.Page.getResourceContent(frameId=frame_id, url=current_url)
-    html_content = content['content']
-    resource_tree = current_tab.Page.getResourceTree()
-    print_resource_tree = False
-    if print_resource_tree:
-        pprint(resource_tree)
-    result = current_tab.Runtime.evaluate(expression="document.title")
-    web_title = result["result"]["value"]
-    result = current_tab.Runtime.evaluate(expression="document.documentElement.outerHTML")
-    html_content = result["result"]["value"]
+    try:
+        content = current_tab.Page.getResourceContent(frameId=frame_id, url=current_url)
+        html_content = content['content']
+        resource_tree = current_tab.Page.getResourceTree()
+        print_resource_tree = False
+        if print_resource_tree:
+            pprint(resource_tree)
+        result = current_tab.Runtime.evaluate(expression="document.title")
+        web_title = result["result"]["value"]
+        result = current_tab.Runtime.evaluate(expression="document.documentElement.outerHTML")
+        html_content = result["result"]["value"]
+    except Exception as e:
+        printe(e)
     return current_url, web_title, html_content
 
 
@@ -2727,8 +2731,11 @@ def openai_translate(roi_htmls, phead):
                     logger.warning(f'[{s + 1}/{len(split_lines_raw)}], {len(input_lines)=}, {len(input_text)=}')
                     logger.info(full_prompt)
                     if ask_ai_app(full_prompt, s):
+                        logger.warning('出现问题')
                         break
-
+    else:
+        logger.warning(f'{do_automate=}')
+        logger.warning(f'{len(split_lines)=}')
     logger.warning(f'{ai_app_name}翻译完成, {len(split_lines)=}')
     return split_lines
 
@@ -4671,8 +4678,6 @@ allow_head = True
 # use_gpt4 = True
 use_gpt4 = False
 
-use_third = False
-
 ai_line_max = 40
 # ai_line_max = 30
 # ai_line_max = 25
@@ -4688,7 +4693,6 @@ ai_line_max = 40
 # ai_line_max = 2
 # ai_line_max = 1
 gpt_char_max = 3200
-
 claude_char_max = 4000
 
 input_line_max = 5
@@ -4905,7 +4909,8 @@ if __name__ == "__main__":
         pass
     else:
         for info_tup in info_tups:
-            logger.debug(info_tup)
+            # logger.debug(info_tup)
+            pass
 
     if SYSTEM in ['MAC', 'M1']:
         ChatGPT_tups = [x for x in info_tups if x[1] == x[2] == 'ChatGPT']
@@ -4943,7 +4948,6 @@ if __name__ == "__main__":
             all_user_lines = []
 
             # use_gpt4 = True
-            # use_third = True
             if SYSTEM in ['MAC', 'M1']:
                 # ai_app_name = 'Claude'
                 pass
