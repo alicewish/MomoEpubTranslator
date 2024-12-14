@@ -38,7 +38,9 @@ allow_quotes = True       # 不考虑引号问题
 use_gpt4 = False       # 使用GPT4
 ```
 
-确保你已将epub文件放到`/Users/your_username/Documents/默墨书籍/BookHTML`目录下。
+首先，参考已有的AppIcon文件夹构筑你自己的AppIcon文件夹，确保对应的图标正确。
+
+然后确保你已将epub文件放到`/Users/your_username/Documents/默墨书籍/BookHTML`目录下。
 
 接着运行`pyqt5_momotranslator_gpt.py`文件：
 
@@ -61,7 +63,7 @@ python pyqt5_momotranslator_gpt.py
 
 ## 使用门槛
 
-1. 需要一台装有openai桌面应用的电脑，可以是win或mac。
+1. 需要一台装有openai桌面应用的电脑，可以是win或mac。win商店如果装不了，可以暂时把地区改到其他地方。
 2. 需要登录开通会员的openai账号。
 3. 如果只是想用于Claude，则需要一台电脑和一个账号（可以是没开会员的）。
 
