@@ -195,6 +195,11 @@ python_ver = python_version()
 
 span_map = {}
 
+google_max_lines = 40
+# google_max_lines = 10
+# google_max_lines = 5
+# google_max_lines = 4
+# google_max_lines = 1
 google_max_chars_global = 5000
 
 average_reading_speed = 250
@@ -2337,6 +2342,10 @@ def activate_app(mac_app_name, wait_time=0):
 
 @logger.catch
 def find_n_click(roi_logo, click_it=False):
+    if SYSTEM in ['MAC', 'M1']:
+        confidence = 0.98
+    else:
+        confidence = 0.92
     roi_location = None
     ai_app_window_id = window_id_dic[ai_app_name]
     ai_app_png = ChatGPTApp_png
@@ -2348,7 +2357,7 @@ def find_n_click(roi_logo, click_it=False):
             activate_app(ai_app_name, 1)
             logger.debug(f'{roi_logo=}')
             # ================必须前台================
-            roi_location = locateOnScreen(roi_logo.as_posix(), confidence=0.98)
+            roi_location = locateOnScreen(roi_logo.as_posix(), confidence=confidence)
             if roi_location:
                 logger.info(f'{roi_location=}')
                 # 获取图片中心点坐标
@@ -2371,7 +2380,7 @@ def find_n_click(roi_logo, click_it=False):
             image = capture_window(ai_app_window_id)
             image.save(ai_app_png, 'PNG')
             # write_pic(ai_app_png, image)
-            roi_location = locate(roi_logo.as_posix(), ai_app_png.as_posix())
+            roi_location = locate(roi_logo.as_posix(), ai_app_png.as_posix(), confidence=confidence)
             logger.info(f'{roi_logo=}')
             logger.info(f'{ai_app_png=}')
             if roi_location:
@@ -2474,66 +2483,115 @@ def get_innermost_tag(tag):
 
 @logger.catch
 @timer_decorator
-def google_translate(simple_lines, target_lang, strip_empty=True):
+def api_google_translate(simple_lines, target_lang):
     """
     将 .docx 文档翻译成指定的目标语言，并将翻译后的文本保存到一个 .txt 文件中。
 
     :param simple_lines: 要翻译的文本列表
     :param target_lang: 目标语言的代码，例如 'zh-CN' 或 'en'
     """
-    chunks = []
-    current_chunk = ""
-
-    if target_lang == 'en':
-        google_max_chars = 1000
-    else:
-        google_max_chars = google_max_chars_global
-
-    # 将文本分成多个块，以便在翻译时遵守最大字符数限制
-    for line in simple_lines:
-        # 检查将当前行添加到当前块后的长度是否超过最大字符数
-        if len(current_chunk) + len(line) + 1 > google_max_chars:  # 加1是为了考虑换行符
-            chunks.append(current_chunk.strip())
-            current_chunk = ""
-        current_chunk += line + "\n"
-
-    # 添加最后一个块（如果有内容的话）
-    if current_chunk.strip():
-        chunks.append(current_chunk.strip())
-
-    # ================分段翻译================
-    translated_chunks = []
 
     local_translated_csv = UserDataFolder / f'谷歌翻译-{epub_name}.csv'
     data_head = ['英文', '中文']
     trans_dic = {}
-    all_trans_infos = []
+    trans_list = []
+    list_of_strs = []
+    current_chunk_lines = []
+    translated_chunks = []
+
+    # 根据目标语言决定最大字符数
+    if target_lang == 'en':
+        google_max_chars = 1000
+    else:
+        google_max_chars = google_max_chars_global
     if local_translated_csv.exists():
-        all_trans_infos, head = iread_csv(local_translated_csv, True, True)
-        logger.debug(f'{len(all_trans_infos)=}')
-        for tup in all_trans_infos:
+        # ================本地缓存================
+        trans_list, head = iread_csv(local_translated_csv, True, True)
+        logger.debug(f'{len(trans_list)=}')
+        for tup in trans_list:
             key, val = tup
+            key_lines = key.splitlines()
+            val_lines = val.splitlines()
             trans_dic[key] = val
+            if len(key_lines) == len(val_lines):
+                for k in range(len(key_lines)):
+                    key_line = key_lines[k]
+                    val_line = val_lines[k]
+                    trans_dic[key_line] = val_line
+    roi_lines = [x for x in simple_lines if x not in trans_dic]
+
+    current_length = 0
+    for line in roi_lines:
+        line_length = len(line) + 1  # +1 考虑换行符
+
+        # 如果追加本行后超过最大字符限制，或者已经达到最大行数限制
+        if (current_length + line_length > google_max_chars) or (len(current_chunk_lines) >= google_max_lines):
+            # 把当前块放进列表
+            list_of_strs.append(current_chunk_lines)
+            # 重置当前块
+            current_chunk_lines = []
+            current_length = 0
+
+        current_chunk_lines.append(line)
+        current_length += line_length
+
+    # 最后，如果还有残余未放入 list_of_strs
+    if current_chunk_lines:
+        list_of_strs.append(current_chunk_lines)
+
+    # 把每个子列表（块）用换行符拼接成字符串
+    chunks = [lf.join(x) for x in list_of_strs]
+
+    # ================分段翻译================
+
     for c in range(len(chunks)):
         chunk = chunks[c]
-        lines = chunk.splitlines()
+        chunk_lines = chunk.splitlines()
         if chunk in trans_dic:
             translated_chunk = trans_dic[chunk]
         else:
-            logger.debug(f'[{c + 1}/{len(chunks)}]{lines[0]}')
+            logger.debug(f'[{c + 1}/{len(chunks)}]{chunk_lines[0]}')
             # 对每个块使用谷歌翻译 API 进行翻译
             translated_chunk = GoogleTranslator(source='auto', target=target_lang).translate(chunk)
-            all_trans_infos.append([chunk, translated_chunk])
-            write_csv(local_translated_csv, all_trans_infos, data_head)
-        translated_chunks.append(translated_chunk)
+            if translated_chunk is not None:
+                trans_list.append([chunk, translated_chunk])
+                write_csv(local_translated_csv, trans_list, data_head)
+        if translated_chunk is not None:
+            translated_chunks.append(translated_chunk)
+            chunk_lines = chunk.splitlines()
+            tr_chunk_lines = translated_chunk.splitlines()
+            logger.debug(f'{len(chunk_lines)=}, {len(tr_chunk_lines)=}')
+            if len(chunk_lines) == len(tr_chunk_lines):
+                for k in range(len(chunk_lines)):
+                    chunk_line = chunk_lines[k]
+                    tr_chunk_line = tr_chunk_lines[k]
+                    trans_dic[chunk_line] = tr_chunk_line
+            else:
+                logger.debug(f'原文行列表: {chunk_lines}')
+                logger.warning(f'译文行列表: {tr_chunk_lines}')
+                # ========== 使用 PrettyTable 对比每行 ==========
+                table = PrettyTable(['Line #', 'Original', 'Translation'])
+                # 为了防止索引越界，取两者中最长的长度进行遍历
+                max_len = max(len(chunk_lines), len(tr_chunk_lines))
+                for i in range(max_len):
+                    original_line = chunk_lines[i] if i < len(chunk_lines) else ""
+                    translated_line = tr_chunk_lines[i] if i < len(tr_chunk_lines) else ""
+                    table.add_row([i + 1, original_line, translated_line])
+                # 打印对比表
+                logger.info(f"\n行数不一致，对比表如下:\n{table.get_string()}")
 
-    # 将翻译后的块连接成一个字符串
-    translated_text = lf.join(translated_chunks)
-    if strip_empty:
-        # ================清除空行================
-        translated_lines = translated_text.splitlines()
-        translated_lines = [x for x in translated_lines if x.strip() != '']
-        translated_text = lf.join(translated_lines)
+    untrans_len = 0
+    tr_lines = []
+    for s in range(len(simple_lines)):
+        simple_line = simple_lines[s]
+        if simple_line in trans_dic:
+            tr_line = trans_dic[simple_line]
+            tr_lines.append(tr_line)
+        else:
+            untrans_len += 1
+    logger.warning(f'{untrans_len=}')
+    logger.warning(f'{len(tr_lines)=}')
+    translated_text = lf.join(tr_lines)
     return translated_text
 
 
@@ -2623,8 +2681,15 @@ def ask_ai_app(full_prompt, s=0):
                 pos = (pos_x, pos_y - 60)
                 click(pos)
 
-        sleep(3)
+        # if gray_up_arrow_logo.exists():
+        #     sleep(5)
+        #     gray_up_arrow_location = find_n_click(gray_up_arrow_logo)
+        #     if gray_up_arrow_location:
+        #         logger.error(f'{gray_up_arrow_location=}')
+        #         warn_user('没按出回车')
+        #         return True
 
+        sleep(1)
         if retry_logo.exists():
             retry_location = find_n_click(retry_logo)
             if retry_location:
@@ -2653,6 +2718,7 @@ def ask_ai_app(full_prompt, s=0):
                 logger.info(f'{headphone_location=}')
                 break
             else:
+                # logger.info(f'没找到headphone_logo')
                 sleep(2)
         if not headphone_location:
             warn_user('答案未生成完毕')
@@ -3788,7 +3854,7 @@ def get_seg_htmls_chapter(para_segments):
 def reorder_htmls(all_html_files, root):
     for a in range(len(all_html_files)):
         html_file = all_html_files[a]
-        logger.info(f'[{a + 1}/{len(all_html_files)}]{html_file=}')
+        # logger.info(f'[{a + 1}/{len(all_html_files)}]{html_file=}')
 
     # ================根据NCX重新排序all_html_files================
     # 1) 在NCX中查找所有<navPoint>里的<content src="xxx.html" />，
@@ -3871,7 +3937,7 @@ def translate_epub(all_html_files):
 
     # ================谷歌翻译================
     if do_google_translate and not dst_txt.exists():
-        translated_text = google_translate(roi_texts_chapter, target_lang)
+        translated_text = api_google_translate(roi_texts_chapter, target_lang)
         write_txt(dst_txt, translated_text)
 
     # ================所有网页================
@@ -3950,7 +4016,7 @@ def translate_epub(all_html_files):
         # ================谷歌翻译================
         if do_google_translate and not dst_txt.exists():
             logger.debug(f'[{a + 1}/{len(all_html_files)}]{src_html_file=}]')
-            translated_text = google_translate(roi_texts_chapter, target_lang)
+            translated_text = api_google_translate(roi_texts_chapter, target_lang)
             write_txt(dst_txt, translated_text)
 
     # ================GPT4翻译================
@@ -4706,17 +4772,12 @@ min_skip = 0
 gpt_max_limit = 80
 # gpt_max_limit = 999
 
-claude_max_limit = 40
+claude_max_limit = 60
 
 max_split_lines = 0
 # max_split_lines = 1
 # max_split_lines = 9999
 
-
-max_len_dic = {
-    'ChatGPT': 0,
-    'Claude': 20,
-}
 
 language = 'en'
 # language = 'zh'
@@ -4742,6 +4803,7 @@ if __name__ == "__main__":
     # upload_logo = AppIcon / '回形针上传文件.png'
     upload_logo = AppIcon / '加号上传文件.png'
     gray_up_arrow_logo = AppIcon / '灰色上箭头.png'
+    gray_up_arrow_logo = AppIcon / 'gray_up_arrow.png'
     up_arrow_logo = AppIcon / '上箭头.png'
     down_arrow_logo = AppIcon / '下箭头.png'
     stop_logo = AppIcon / '停止.png'
